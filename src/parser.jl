@@ -14,7 +14,7 @@ end
 function strng(c)
     return Psr((x)-> length(x) >= 1 ?
         (x[1][1] == c ?
-            ParserResult([x[1]], x[2:end])
+            ParserResult(x[1], x[2:end])
             : nothing)
         : nothing)
 end
@@ -22,7 +22,7 @@ end
 function typ(t)
     return Psr((x)-> length(x) >= 1 ?
         (x[1][2] == t ?
-            ParserResult([x[1]], x[2:end])
+            ParserResult(x[1], x[2:end])
             : nothing)
         : nothing)
 end
@@ -44,6 +44,21 @@ function choice(a, b)
 end
 
 
+function many0(parser)
+    function many0Aux(s)
+        result = []
+        tmp = parser.fun(s)
+        while tmp != nothing
+            s = tmp.remained
+            result = push!(result, tmp.matched) 
+            tmp = parser.fun(s)           
+        end
+        return ParserResult(result, s)
+    end
+
+    return Psr(many0Aux)
+
+end
 
 function seq(parserLst)
     function seqAux(s)
@@ -52,14 +67,12 @@ function seq(parserLst)
         tmp = nothing
 
         for p in parserLst
-            println("s+=+=", s)
             tmp = p.fun(s)
-            println("tmp%%%%", tmp)
             if tmp == nothing
                 return nothing
             else
                 s = tmp.remained
-                push!(result, tmp.matched[1])
+                result = push!(result, tmp.matched)
                 
             end
         end
@@ -74,17 +87,17 @@ end
 
 patternList = [("int", "\\d+"),
                ("id", "[_a-zA-Z][_0-9a-zA-Z]*"),
-               ("l_paren", "[\\(]"),
-               ("r_paren", "[\\)]"),
+               ("lParen", "[\\(]"),
+               ("rParen", "[\\)]"),
                ("plus", "[+]"),
                ("minus", "[\\-]"),
                ("mul", "[\\*]"),
-               ("div", "[\\\\]"),
+               ("div", "[\\/]"),
                ("sp", "\\s+"),
                ("comma", "[,]"),
-               ("amp", "[&]"),
+               ("semicolon", "[;]"),
+               ("lambda", "[=][\\>]"),
                ("assign", "[=]"),
-               ("lambda", "[=][>]"),
                ]
 
 function combineUnit(tup)
@@ -102,7 +115,11 @@ matchEntirely = Regex(matchAll)
 print(matchEntirely)
 
 
-inp = "123 + 345 - 456 * a"
+inp = """
+((a, b, c)=>(d=>e)) add = add;
+int a = 8; 
+12 + foo(13*a,14,15) """
+
 print("~~~\n")
 isEntirelyMatched = match(matchEntirely, inp)
 
@@ -158,13 +175,113 @@ println(prettyString(test1))
 println(prettyString(test2))
 
 """
-term = int
+atom = int | id
+unit = "(" unit ")" | atom
+args = unit ("," unit)*
+factor = unit "(" args ")"
+term = (factor (*|/) factor) | factor
 exp = (term (+|-) term) | term
+
+tyOfArgs = ty ("," ty)*
+tyOfFn = "(" ty => ty ")"
+ty = id | tyOfFn | "(" tyOfArgs ")"
+
+letexp = ty id "=" exp ";" body
+body = exp | letexp
 """
-term = typ("int")
+atom = typ("int") | typ("id")
+
+
+function longUnitAux(input)
+    rawFunc = seq([typ("lParen"),  unit, typ("rParen")])
+    rawRes = rawFunc.fun(input)
+    if rawRes != nothing
+        matched = rawRes.matched[2]
+        res = ParserResult(matched, rawRes.remained)
+        return res
+    else
+        return rawRes
+    end
+end
+function unitAux(input)
+    longUnit = Psr(longUnitAux)
+    rawFunc = longUnit | atom
+    res = rawFunc.fun(input)
+    return res
+end
+unit = Psr(unitAux)
+
+
+function argItemAux(input)
+    rawFunc = seq([typ("comma"), exp])
+    rawRes = rawFunc.fun(input)
+    if rawRes != nothing
+        matched = rawRes.matched[2]
+        res = ParserResult(matched, rawRes.remained)
+        return res
+    else
+        return rawRes
+    end
+end
+argItem = Psr(argItemAux)
+
+function argsAux(input)
+    rawFunc = seq([exp, many0(argItem)])
+    res = rawFunc.fun(input)
+    if res != nothing
+        matched = vcat([res.matched[1]], res.matched[2])
+        res = ParserResult(matched, res.remained)
+    end
+    return res
+end
+args = Psr(argsAux)
+
+
+function longFactorAux(input)
+    rawFunc = seq([unit, typ("lParen"),  args, typ("rParen")])
+    rawRes = rawFunc.fun(input)
+    if rawRes != nothing
+        matched = [("%call", "id"), rawRes.matched[1], rawRes.matched[3]]
+        res = ParserResult(matched, rawRes.remained)
+        return res
+    else
+        return rawRes
+    end
+end
+
+function factorAux(input)
+    longFactor = Psr(longFactorAux)
+    rawFunc = longFactor | unit
+    res = rawFunc.fun(input)
+    return res
+end
+
+factor = Psr(factorAux)
+
+function longTermAux(input)
+    rawFunc = seq([factor,  (typ("mul") | typ("div")), factor])
+    rawRes = rawFunc.fun(input)
+    if rawRes != nothing
+        matched = [rawRes.matched[2], rawRes.matched[1], rawRes.matched[3]]
+        res = ParserResult(matched, rawRes.remained)
+        return res
+    else
+        return rawRes
+    end
+end
+
+function termAux(input)
+    longTerm = Psr(longTermAux)
+    rawFunc = longTerm | factor
+    res = rawFunc.fun(input)
+    return res
+end
+
+term = Psr(termAux)
+
 
 function longExpAux(input)
-    rawFunc = seq([term,  (strng("+") | strng("-")), term])
+    rawFunc = seq([term,  (typ("plus") | typ("minus")), term])
     rawRes = rawFunc.fun(input)
     if rawRes != nothing
         matched = [rawRes.matched[2], rawRes.matched[1], rawRes.matched[3]]
@@ -179,16 +296,82 @@ function expAux(input)
     longExp = Psr(longExpAux)
     rawFunc = longExp | term
     res = rawFunc.fun(input)
-
     return res
-
 end
-
 exp = Psr(expAux)
 
 
+"""tyOfArgs = "(" ty ("," ty)* ")"
+tyOfFn = "(" ty => ty ")"
+ty = id | tyOfFn |  tyOfArgs """
 
-test3 = initWrapped >> exp
+function tyArgItemAux(input)
+    rawFunc = seq([typ("comma"), typ("id")])
+    rawRes = rawFunc.fun(input)
+    if rawRes != nothing
+        matched = rawRes.matched[2]
+        res = ParserResult(matched, rawRes.remained)
+        return res
+    else
+        return rawRes
+    end
+end
+
+function tyOfArgsAux(input)
+    tyArgItem = Psr(tyArgItemAux)
+    rawFunc = seq([typ("lParen"), typ("id"), many0(tyArgItem), typ("rParen")])
+    res = rawFunc.fun(input)
+    if res != nothing
+        matched = vcat([("%argType")], vcat([res.matched[2]], res.matched[3]))
+        res = ParserResult(matched, res.remained)
+    end
+    return res
+end
+
+function tyOfFnAux(input)
+    rawFunc = seq([typ("lParen"), ty, typ("lambda"), ty, typ("rParen")])
+    rawRes = rawFunc.fun(input)
+    if rawRes != nothing
+        matched = [("%funType", "id"), rawRes.matched[2], rawRes.matched[4]]
+        res = ParserResult(matched, rawRes.remained)
+        return res
+    else
+        return rawRes
+    end
+end
+
+function tyAux(input)
+    tyOfFn = Psr(tyOfArgsAux)
+    tyOfArgs = Psr(tyOfFnAux)
+    rawFunc = tyOfFn | tyOfArgs | typ("id")
+    res = rawFunc.fun(input)
+    return res
+end
+ty = Psr(tyAux)
+
+function letExpAux(input)
+    #id id "=" exp ";" body
+    rawFunc = seq([ty, typ("id"), typ("assign"), exp, typ("semicolon"), body])
+    rawRes = rawFunc.fun(input)
+    if rawRes != nothing
+        typ_matched = rawRes.matched[1]
+        var_matched = rawRes.matched[2]
+        val_matched = rawRes.matched[4]
+        body_matched = rawRes.matched[6]
+
+        matched = [("%let", "id"), [typ_matched, var_matched], val_matched, body_matched]
+        res = ParserResult(matched, rawRes.remained)
+        return res
+    else
+        return rawRes
+    end
+end
+
+letExp = Psr(letExpAux)
+
+body = letExp | exp
+
+test3 = initWrapped >> body
 println(prettyString(test3))
 
 
