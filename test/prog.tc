@@ -1,0 +1,3 @@
+(int -> int)
+addmulti2 = (x , y) => (x + y) * 2;
+addmulti2(40,10)

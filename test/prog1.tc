@@ -1,0 +1,5 @@
+int a = 12;
+int b = 12;
+int a = 15;
+int d = 20;
+a + d((0 - a), b)

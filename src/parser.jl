@@ -90,10 +90,11 @@ patternList = [("int", "\\d+"),
                ("lParen", "[\\(]"),
                ("rParen", "[\\)]"),
                ("plus", "[+]"),
+               ("funType", "[-][\\>]"),
                ("minus", "[\\-]"),
                ("mul", "[\\*]"),
                ("div", "[\\/]"),
-               ("sp", "\\s+"),
+               ("sp", "[\\n\\r ]+"),
                ("comma", "[,]"),
                ("semicolon", "[;]"),
                ("lambda", "[=][\\>]"),
@@ -112,21 +113,15 @@ matchEachItem = Regex(tmp)
 matchAll = "^(" * tmp * ")+\$"
 matchEntirely = Regex(matchAll)
 
-print(matchEntirely)
+#println(matchEntirely)
 
+"""
+((int -> int) -> int)
+ add = (x , y) => x + y;
 
-inp = """
-((a, b, c)=>(d=>e)) add = add;
-int a = 8; 
-12 + foo(13*a,14,15) """
-
-print("~~~\n")
-isEntirelyMatched = match(matchEntirely, inp)
-
-if isEntirelyMatched == false
-    print("illegal tokens contained.")
-
-end
+ int a = 8; 
+12 + foo(13*a,14,15)
+"""
 
 
 function prettyString(ele)
@@ -146,45 +141,51 @@ function prettyString(ele)
     else #number
         return string(ele)
     end
-
 end
 
-mI = eachmatch(matchEachItem, inp)
+function prettyStringLisp(ele)
+    if isa(ele, String)
+        return ele
+    elseif isa(ele, Tuple)
+        res = prettyStringLisp(ele[1])
+        return res
+    elseif isa(ele, Array)
+        mappedEle = map(prettyStringLisp, ele)
+        mappedString = "(" * join(mappedEle, " ") * ")"
+        return mappedString
+    elseif isa(ele, ParserResult)
+        res = prettyStringLisp(ele.matched)
+        return res
+    else #number
+        return string(ele)
+    end
+end
+
+
+
 
 function processKeys(x)
     keys_ = keys(x)
     return filter((i) -> x[i] != nothing, keys_)[1]
 end
 
-matchedList = map((x)->x.match, collect(mI))
-
-groupNameList = map(processKeys, collect(mI))
-
-zippedTokenList = collect(zip(matchedList, groupNameList))
-
-print(zippedTokenList)
-
-withoutSpaces = filter((x)-> x[2] != "sp", zippedTokenList)
-initWrapped = ParserResult([], withoutSpaces)
 
 
-test1 = initWrapped >> strng("123") >> (strng("+")|strng("-"))
-test2 = initWrapped >> seq([strng("123"),  strng("+")])
 
-println(prettyString(test1))
-println(prettyString(test2))
+#test1 = initWrapped >> strng("123") >> (strng("+")|strng("-"))
+#test2 = initWrapped >> seq([strng("123"),  strng("+")])
+
+#println(prettyString(test1))
+#println(prettyString(test2))
 
 """
 atom = int | id
-unit = "(" unit ")" | atom
+func = "(" fn_args ")" "=>" body
+unit = func | "(" exp ")" | atom
 args = unit ("," unit)*
 factor = unit "(" args ")"
 term = (factor (*|/) factor) | factor
 exp = (term (+|-) term) | term
-
-tyOfArgs = ty ("," ty)*
-tyOfFn = "(" ty => ty ")"
-ty = id | tyOfFn | "(" tyOfArgs ")"
 
 letexp = ty id "=" exp ";" body
 body = exp | letexp
@@ -192,20 +193,60 @@ body = exp | letexp
 atom = typ("int") | typ("id")
 
 
-function longUnitAux(input)
-    rawFunc = seq([typ("lParen"),  unit, typ("rParen")])
+
+function fnArgItemAux(input)
+    rawFunc = seq([typ("comma"),  typ("id")])
     rawRes = rawFunc.fun(input)
     if rawRes != nothing
         matched = rawRes.matched[2]
         res = ParserResult(matched, rawRes.remained)
         return res
     else
-        return rawRes
+        return nothing
+    end
+end
+fnArgItem = Psr(fnArgItemAux)
+
+function fnArgsAux(input)
+    rawFunc = seq([typ("id"), many0(fnArgItem)])
+    res = rawFunc.fun(input)
+    if res != nothing
+        matched = vcat([res.matched[1]], res.matched[2])
+        res = ParserResult(matched, res.remained)
+        return res
+    else
+        return nothing
+    end
+end
+fnArgs = Psr(fnArgsAux)
+
+function funcAux(input)
+    rawFunc = seq([typ("lParen"),  fnArgs, typ("rParen"), typ("lambda"), body])
+    rawRes = rawFunc.fun(input)
+    if rawRes != nothing
+        matched = [("%lambda", "id"), rawRes.matched[2], rawRes.matched[5]]
+        res = ParserResult(matched, rawRes.remained)
+        return res
+    else
+        return nothing
+    end
+end
+
+function longUnitAux(input)
+    rawFunc = seq([typ("lParen"),  exp, typ("rParen")])
+    rawRes = rawFunc.fun(input)
+    if rawRes != nothing
+        matched = rawRes.matched[2]
+        res = ParserResult(matched, rawRes.remained)
+        return res
+    else
+        return nothing
     end
 end
 function unitAux(input)
+    fun = Psr(funcAux)
     longUnit = Psr(longUnitAux)
-    rawFunc = longUnit | atom
+    rawFunc = fun | longUnit | atom
     res = rawFunc.fun(input)
     return res
 end
@@ -220,7 +261,7 @@ function argItemAux(input)
         res = ParserResult(matched, rawRes.remained)
         return res
     else
-        return rawRes
+        return nothing
     end
 end
 argItem = Psr(argItemAux)
@@ -245,7 +286,7 @@ function longFactorAux(input)
         res = ParserResult(matched, rawRes.remained)
         return res
     else
-        return rawRes
+        return nothing
     end
 end
 
@@ -266,7 +307,7 @@ function longTermAux(input)
         res = ParserResult(matched, rawRes.remained)
         return res
     else
-        return rawRes
+        return nothing
     end
 end
 
@@ -288,7 +329,7 @@ function longExpAux(input)
         res = ParserResult(matched, rawRes.remained)
         return res
     else
-        return rawRes
+        return nothing
     end
 end
     
@@ -302,48 +343,62 @@ exp = Psr(expAux)
 
 
 """tyOfArgs = "(" ty ("," ty)* ")"
-tyOfFn = "(" ty => ty ")"
-ty = id | tyOfFn |  tyOfArgs """
+tyHead = tyOfArgs | tyOfFn | id
+tyOfFn = "(" tyHead -> ty ")"
+ty = id | tyOfFn """
 
 function tyArgItemAux(input)
-    rawFunc = seq([typ("comma"), typ("id")])
+    rawFunc = seq([typ("comma"), ty])
     rawRes = rawFunc.fun(input)
     if rawRes != nothing
         matched = rawRes.matched[2]
         res = ParserResult(matched, rawRes.remained)
         return res
     else
-        return rawRes
+        return nothing
     end
 end
 
+
 function tyOfArgsAux(input)
     tyArgItem = Psr(tyArgItemAux)
-    rawFunc = seq([typ("lParen"), typ("id"), many0(tyArgItem), typ("rParen")])
+    rawFunc = seq([typ("lParen"), ty, many0(tyArgItem), typ("rParen")])
     res = rawFunc.fun(input)
     if res != nothing
         matched = vcat([("%argType")], vcat([res.matched[2]], res.matched[3]))
         res = ParserResult(matched, res.remained)
+        return res
+    else
+        return nothing
     end
+end
+
+function tyHeadAux(input)
+    tyOfArgs  = Psr(tyOfArgsAux)
+    tyOfFn = Psr(tyOfFnAux)
+    rawFunc = tyOfArgs | tyOfFn | typ("id")
+    res = rawFunc.fun(input)
     return res
 end
 
 function tyOfFnAux(input)
-    rawFunc = seq([typ("lParen"), ty, typ("lambda"), ty, typ("rParen")])
+    tyHead = Psr(tyHeadAux)
+    rawFunc = seq([typ("lParen"), tyHead, typ("funType"), ty, typ("rParen")])
     rawRes = rawFunc.fun(input)
     if rawRes != nothing
         matched = [("%funType", "id"), rawRes.matched[2], rawRes.matched[4]]
         res = ParserResult(matched, rawRes.remained)
         return res
     else
-        return rawRes
+        return nothing
     end
 end
 
+
+
 function tyAux(input)
-    tyOfFn = Psr(tyOfArgsAux)
-    tyOfArgs = Psr(tyOfFnAux)
-    rawFunc = tyOfFn | tyOfArgs | typ("id")
+    tyOfFn= Psr(tyOfFnAux)
+    rawFunc = tyOfFn | typ("id")
     res = rawFunc.fun(input)
     return res
 end
@@ -363,7 +418,7 @@ function letExpAux(input)
         res = ParserResult(matched, rawRes.remained)
         return res
     else
-        return rawRes
+        return nothing
     end
 end
 
@@ -371,8 +426,24 @@ letExp = Psr(letExpAux)
 
 body = letExp | exp
 
-test3 = initWrapped >> body
-println(prettyString(test3))
+function totalParse(prog)
+    isEntirelyMatched = match(matchEntirely, prog)
+    if isEntirelyMatched == false
+        throw("illegal tokens contained.")
+    end
+
+    mI = eachmatch(matchEachItem, prog)
+    matchedList = map((x)->x.match, collect(mI))
+    groupNameList = map(processKeys, collect(mI))
+    zippedTokenList = collect(zip(matchedList, groupNameList))
+    print(zippedTokenList)
+
+    withoutSpaces = filter((x)-> x[2] != "sp", zippedTokenList)
+    initWrapped = ParserResult([], withoutSpaces)
+    res = initWrapped >> body
+    println(prettyStringLisp(res))
+    return res.matched
+end
 
 
 end
