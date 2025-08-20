@@ -147,7 +147,7 @@ function prettyStringLisp(ele)
     if isa(ele, String)
         return ele
     elseif isa(ele, Tuple)
-        res = prettyStringLisp(ele[1])
+        res = string(prettyStringLisp(ele[1]))
         return res
     elseif isa(ele, Array)
         mappedEle = map(prettyStringLisp, ele)
@@ -303,7 +303,7 @@ function longTermAux(input)
     rawFunc = seq([factor,  (typ("mul") | typ("div")), factor])
     rawRes = rawFunc.fun(input)
     if rawRes != nothing
-        matched = [rawRes.matched[2], rawRes.matched[1], rawRes.matched[3]]
+        matched = [("%prime", "id"), rawRes.matched[2], [rawRes.matched[1], rawRes.matched[3]]]
         res = ParserResult(matched, rawRes.remained)
         return res
     else
@@ -325,7 +325,7 @@ function longExpAux(input)
     rawFunc = seq([term,  (typ("plus") | typ("minus")), term])
     rawRes = rawFunc.fun(input)
     if rawRes != nothing
-        matched = [rawRes.matched[2], rawRes.matched[1], rawRes.matched[3]]
+        matched = [("%prime", "id"), rawRes.matched[2], [rawRes.matched[1], rawRes.matched[3]]]
         res = ParserResult(matched, rawRes.remained)
         return res
     else

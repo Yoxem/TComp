@@ -3,6 +3,11 @@ include("./parser.jl")
 using .Parser
 using Match
 
+# For pass 2
+struct SimpleExp
+    binds
+    body
+end
 
 inp = ARGS
 f = open(ARGS[1], "r")
@@ -15,8 +20,8 @@ tmp_var_no = 0
 
 
 
-# Pass 1 duplicated varname unified
-function unifyVar(parsed, env)
+# Pass 1: Duplicated varname uniquified
+function uniquifyVar(parsed, env)
     @match parsed begin
         #  letrec is not considered
         #[("%let", "id"), [ty, var], val, [("%lambda", "id"), args, body]] => nothing 
@@ -26,35 +31,28 @@ function unifyVar(parsed, env)
                 envNew = env
                 push!(envNew, var[1]) # push x of var = ("x", "id") in newEnv
                 res = [("%let", "id"),
-                    [ty, unifyVar(var, envNew)],
-                    unifyVar(val, env),
-                    unifyVar(body, envNew)]
+                    [ty, uniquifyVar(var, envNew)],
+                    uniquifyVar(val, env),
+                    uniquifyVar(body, envNew)]
                 return res
             end
         (var, "id") =>
             begin
                 reversedEnv = reverse(env)
                 index = length(env) - findfirst(e -> e == var, reversedEnv) + 1
-                return (index, "id")
+                newVar = var * string(index)
+                return (newVar, "id")
             end
-        [(plus, "plus"), lhs, rhs] =>
+        [("%prime", "id"), op, [lhs, rhs]] =>
             begin
-                lhs_new = unifyVar(lhs, env)
-                rhs_new = unifyVar(rhs, env)
-                return [(plus, "plus"), lhs_new, rhs_new] 
-
-            end
-        [(minus, "minus"), lhs, rhs] =>
-            begin
-                lhs_new = unifyVar(lhs, env)
-                rhs_new = unifyVar(rhs, env)
-                return [(minus, "minus"), lhs_new, rhs_new] 
-
+                lhs_new = uniquifyVar(lhs, env)
+                rhs_new = uniquifyVar(rhs, env)
+                return [("%prime", "id"), op, [lhs_new, rhs_new]]
             end
         [("%call", "id"), callee, args...] =>
             begin
-                unifiedCallee =  unifyVar(callee, env)
-                unifiedArgs = map(x ->unifyVar(x, env), args[1])
+                unifiedCallee =  uniquifyVar(callee, env)
+                unifiedArgs = map(x ->uniquifyVar(x, env), args[1])
 
                 return vcat([("%call", "id"), unifiedCallee],  [unifiedArgs])
             end
@@ -63,10 +61,85 @@ function unifyVar(parsed, env)
     end
 end
 
-emptyEnv = []
-res = unifyVar(parsed, emptyEnv)
-print(res)
+# PASS2 explicit Control and Remove Complex
+function explicitControlRemoveComplex(prog)
+    function rmComplex(exp)
+        return rmComplexAux1(exp, 0)
+    end
+    function rmComplexAux1(exp, varNo)
+        if exp[1] == ("%let", "id")
+            res = splitLet([], exp, varNo)
+            tup = rmComplexAux2(SimpleExp(res[1], res[2]), res[3])
+        else
+            tup = rmComplexAux2(SimpleExp([], exp), varNo) 
+        end
+        return tup
+    end
 
+
+    function rmComplexAux2(exp, varNo)
+
+        return @match exp.body begin
+            (c, "int") => return (exp, varNo)
+            (v, "id") => return (exp, varNo)
+            [(id, "id"), caller, callee] where (id == "%prime" || id == "%call") => 
+            begin
+                newResList = exp.binds
+                new_exp_body = Any[(id, "id"), caller]
+                new_exp_args = []
+
+                for i in callee
+                    res = rmComplexAux1(i, varNo)
+                    varNo = res[2]
+                    newBind = res[1].binds
+                    if newBind != []
+                        newResList = vcat(newResList, newBind)
+                        push!(new_exp_args, last(newBind)[2])
+                    else
+                        push!(new_exp_args, i)
+                    end
+        
+                end
+                push!(new_exp_body, new_exp_args)
+    
+                println(newResList)
+                newBindVar = "tmp" * string(varNo)
+                varNo += 1 
+                newBind = [("%let", "id"), newBindVar, new_exp_body]
+                push!(newResList, newBind)
+                return (SimpleExp(newResList, newBindVar), varNo)
+
+            end
+
+
+            _ => "Error"
+        end
+    end
+    
+    function splitLet(binds, exp, varNo)
+        if exp[1] == ("%let", "id")
+            res = rmComplexAux1(exp[3], varNo)
+            binds = vcat(binds, res[1].binds)
+            new_exp = res[1].body
+            new_bind = [("%let", "id"), exp[2], new_exp]
+            push!(binds, new_bind)
+    
+    
+            varNo = res[2]
+            return splitLet(binds, exp[4], varNo)
+        else
+            return (binds, exp, varNo)
+        end
+    end
+
+    return rmComplex(prog)[1]
+end
+
+emptyEnv = []
+res = uniquifyVar(parsed, emptyEnv)
+println("PASS1", res)
+res2 = explicitControlRemoveComplex(res)
+println("PASS2", Parser.prettyStringLisp(res2.binds), ", ", Parser.prettyStringLisp(res2.body))
 
 close(f)
 
