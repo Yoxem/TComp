@@ -93,8 +93,9 @@ function explicitControlRemoveComplex(prog)
                     varNo = res[2]
                     newBind = res[1].binds
                     if newBind != []
+                        println("NEW_BIND:", newBind)
                         newResList = vcat(newResList, newBind)
-                        push!(new_exp_args, last(newBind)[2])
+                        push!(new_exp_args, last(newBind)[2][2])
                     else
                         push!(new_exp_args, i)
                     end
@@ -103,7 +104,7 @@ function explicitControlRemoveComplex(prog)
                 push!(new_exp_body, new_exp_args)
     
                 println(newResList)
-                newBindVar = "tmp" * string(varNo)
+                newBindVar = [("int", "id"), ("tmp" * string(varNo) , "id")]
                 varNo += 1 
                 newBind = [("%let", "id"), newBindVar, new_exp_body]
                 push!(newResList, newBind)
@@ -132,14 +133,69 @@ function explicitControlRemoveComplex(prog)
         end
     end
 
-    return rmComplex(prog)[1]
+
+    raw_res =  rmComplex(prog)[1]
+    res = push!(raw_res.binds, raw_res.body)
+    return res
 end
+
+### PASS 3 assign x86 instruction
+function assignInstruction(inp)
+    resList = []
+    for i in inp
+        println(i)
+        @match i begin
+            [("%let", "id"), [_ty, (id, "id")],
+            [("%prime", "id"), (op, _), [(rhs, _), (lhs, _)]]] =>
+            begin
+                instr = ""
+                ops = ["+", "-", "*", "/"]
+                instrs = ["addq", "subq", "mulq", "divq"]
+                opIndex = findfirst(x -> x == op, ops)
+                instr = instrs[opIndex]
+
+                if rhs == id
+                    line1 = [instr, lhs, id]
+                    push!(resList, line1)
+                else
+                    line1 = ["movq", lhs, id]
+                    line2 = [instr, rhs, id]
+
+                    push!(resList, line1)
+                    push!(resList, line2)
+                end
+                
+
+                #TODO　[("%call", "id"), (op, _), args] => ...
+            end
+
+            [("%let", "id"), [_ty, (id, "id")], (val, _)] =>
+            begin
+                line = ["movq", val, id]
+                push!(resList, line)
+            end
+
+            (c, "int") => push!(resList, [c])
+
+            (v, "id") => push!(resList, [v])
+            _ => println("Error")
+        end
+    end
+
+    return resList
+
+end
+
 
 emptyEnv = []
 res = uniquifyVar(parsed, emptyEnv)
 println("PASS1", res)
 res2 = explicitControlRemoveComplex(res)
-println("PASS2", Parser.prettyStringLisp(res2.binds), ", ", Parser.prettyStringLisp(res2.body))
+
+println("PASS2", Parser.prettyStringLisp(res2))
+res3 = assignInstruction(res2)
+println("PASS3", res3)
+
 
 close(f)
 
