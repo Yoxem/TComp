@@ -436,12 +436,10 @@ function totalParse(prog)
     matchedList = map((x)->x.match, collect(mI))
     groupNameList = map(processKeys, collect(mI))
     zippedTokenList = collect(zip(matchedList, groupNameList))
-    print(zippedTokenList)
 
     withoutSpaces = filter((x)-> x[2] != "sp", zippedTokenList)
     initWrapped = ParserResult([], withoutSpaces)
     res = initWrapped >> body
-    println(prettyStringLisp(res))
     return res.matched
 end
 
