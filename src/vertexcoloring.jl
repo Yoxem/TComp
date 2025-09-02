@@ -1,4 +1,6 @@
-graph = [['a', 'b'], ['b', 'c'], ['e', 'd'], ['e', 'a'], ['a', 'c'], ['b','e'], ['e','c']]
+module VertexColoring
+
+#graph = [['a', 'b'], ['b', 'c'], ['e', 'd'], ['e', 'a'], ['a', 'c'], ['b','e'], ['e','c']]
 
 
 function vertexColoring(graph)
@@ -30,19 +32,18 @@ function vertexColoring(graph)
 
     color = Dict()
 
-    println(verticesList)
 
 
+    tmpId = -1
     for i in verticesList
         i_adjacents = adjacentNodes[i]
-        println(i_adjacents)
         i_adjacents_color_set = Set(map(x -> getColor(x, color), collect(i_adjacents)))
         i_adjacents_color_list = sort(collect(i_adjacents_color_set))
 
         if i_adjacents_color_list == [notDefined]
-            color[i] = 0
+            color[i] = 2
         else
-            tmpId = 0
+            tmpId = 2
             for i in i_adjacents_color_list
                 if tmpId == i
                     tmpId += 1
@@ -52,8 +53,26 @@ function vertexColoring(graph)
         end
     end
 
-    return color
+    maxColorId = tmpId
+
+    #force gDict["%rax"] = 1
+    color["%rax"] = 1
+    return (color, maxColorId)
 
 end
 
-println(vertexColoring(graph))
+#println(vertexColoring(graph))
+
+# Disabled = force the color id for %rax set to 1
+"""function correctGraph(gDict)
+    raxOrigId = gDict["%rax"]
+    for node in keys(gDict)
+        if gDict[node] == raxOrigId
+            gDict[node] = 1
+        elseif gDict[node] == 1
+            gDict[node] = raxOrigId
+        end
+    end
+    return gDict
+end"""
+end

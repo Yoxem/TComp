@@ -1,6 +1,8 @@
 module TComp
 include("./parser.jl")
+include("./vertexcoloring.jl")
 using .Parser
+using .VertexColoring
 using Match
 
 # For pass 2
@@ -15,7 +17,7 @@ prog = read(f, String)
 
 #(prog)
 parsed = Parser.totalParse(prog)
-#print(parsed)
+println("PARSED\n", Parser.prettyStringLisp(parsed))
 tmp_var_no = 0
 
 
@@ -156,6 +158,8 @@ end
 
 ### PASS 3 assign x86 instruction
 function assignInstruction(inp)
+    println("INP", inp)
+
     resList = []
     for i in inp
         @match i begin
@@ -166,7 +170,7 @@ function assignInstruction(inp)
                 push!(resList, ["movq", val, "%rax"])
             end
             [("%let", "id"), [_ty, (id, "id")],
-               [("%prime", "id"), (op, _), [(lhs, lhs_t), (rhs, rhs_t)]]] =>
+                [("%prime", "id"), (op, _), [(lhs, lhs_t), (rhs, rhs_t)]]] =>
             begin
                 instr = ""
                 ops = ["+", "-", "*", "/"]
@@ -205,13 +209,8 @@ function assignInstruction(inp)
                 line = ["movq", val, id]
                 push!(resList, line)
             end
-
-            (c, "int") => begin
-                c_modified = "\$" * c
-                push!(resList, [c_modified])
-            end
-
-            (v, "id") => push!(resList, [v])
+            (c, "int") => push!(resList, ["movq", "\$" * c, "%rax"])
+            (val, "id") => push!(resList, ["movq", val, "%rax"])
             _ => println("Error")
         end
     end
@@ -228,11 +227,78 @@ res2 = explicitControlRemoveComplex(res)
 
 #println("PASS2", Parser.prettyStringLisp(res2))
 res3 = assignInstruction(res2)
-#println("PASS3", res3)
+println("RES3:\n", res3)
+# generate vertex graph for register allocation using vertex-coloring model
+function generateVertexGraph(prog)
+    graph = []
+    progReversed = reverse(prog)
+
+    varRegex = r"(^[^\$].*)"
+
+    out = Set([])
+    in_ = Set([])
+    use = Set([])
+    def = Set([])
+
+    for i in progReversed
+        use = Set([])
+        def = Set([])
+        # only support binary operation(3-term)
+        out = in_ #prev. out-set becomes current in-set
+        @match i begin
+        ["movq", orig, dest] => # dest = orig
+            begin
+                if match(varRegex, orig) != nothing
+                    push!(use, orig)
+                end
+                if match(varRegex, dest) != nothing
+                    push!(def, dest)
+                end
+            end
+        # dest = orig (+-*/) dest
+        [op, orig, dest] where (op in ["addq", "subq", "imulq", "divq"]) =>
+            begin
+                if match(varRegex, orig) != nothing
+                    push!(use, orig)
+                end
+                if match(varRegex, dest) != nothing
+                    push!(use, dest)
+                    push!(def, dest)
+                end
+            end
+        _ => 0
+        end
+
+        in_ = union(use, setdiff(out, def))
+        #println("IN", in_)
+        #println("DEF", def)
+        #println("OUT", out)
+        in_list = collect(in_)
+
+        for j in range(1, length(in_list)-1)
+            for k in range(j+1,length(in_list))
+                path1 = [in_list[j], in_list[k]]
+                path2 = [in_list[k], in_list[j]]
+                if !(path1 in graph) & !(path2 in graph)
+                    push!(graph, path1)
+                end 
+            end
+        end
+    end
+    return graph
+end
+
+vertexGraph = generateVertexGraph(res3)
+println(vertexGraph)
+colorGraphDictWithMaxId = VertexColoring.vertexColoring(vertexGraph)
+colorGraphDict = colorGraphDictWithMaxId[1]
+colorMaxId = colorGraphDictWithMaxId[2]
+
+registerList = ["%rax", "%rdx", "%r8", "%r9", "%r10", "%r11", "%r12", "%r13", "%r14", "%r15"]
 
 
 # PASS4 assign home
-function assignHomes(inp)
+function assignHomes(inp, colorGraph, registerList)
     varRegex = r"(^[^\$%].*)"
     res = []
     vars = []
@@ -250,8 +316,6 @@ function assignHomes(inp)
             end
         end 
     end
-    #println("ALL_VAR", vars)
-
 
     varsLength = length(vars)
     for i in inp
@@ -259,18 +323,33 @@ function assignHomes(inp)
         orig = i[2]
         dest = i[3]
 
-        origIdx = findfirst(x -> x == orig,vars)
-        if origIdx != nothing
-            realAddressIdx = varsLength - origIdx + 1
-            realAddress = "-$(realAddressIdx * 8)(%rbp)"
-            orig = realAddress
+
+        if orig in keys(colorGraph)
+            origColorId = colorGraph[orig]
+            if origColorId <= length(registerList)
+                orig = registerList[origColorId]
+            else
+                origIdx = findfirst(x -> x == orig,vars)
+                realAddressIdx = varsLength - origIdx + 1
+                realAddress = "-$(realAddressIdx * 8)(%rbp)"
+                orig = realAddress
+            end 
+        elseif match(r"(^[^\$%].+)", orig) != nothing # isolated (unpathized) variable
+            orig = "%rax"
         end
 
-        destIdx = findfirst(x -> x == dest,vars)
-        if destIdx != nothing
-            realAddressIdx = varsLength - destIdx + 1
-            realAddress = "-$(realAddressIdx * 8)(%rbp)"
-            dest = realAddress
+        if dest in keys(colorGraph)
+            destColorId = colorGraph[dest]
+            if destColorId <= length(registerList)
+                dest = registerList[destColorId]
+            else
+                destIdx = findfirst(x -> x == dest,vars)
+                realAddressIdx = varsLength - destIdx + 1
+                realAddress = "-$(realAddressIdx * 8)(%rbp)"
+                dest = realAddress
+            end  
+        elseif match(r"(^[^\$%].+)", dest) != nothing # isolated (unpathized) variable
+            dest = "%rax"             
         end
 
         push!(res, [instr, orig, dest])
@@ -294,13 +373,20 @@ function patchInstruction(inp)
 
             cmd2 = [inst, "%rax", dest]
             push!(res, cmd2)
-        elseif (inst == "imulq") & (match(r"^%.+", dest) == nothing)
-            cmd1 = ["movq", dest, "%rax"]
-            cmd2 = ["imulq", orig, "%rax"]
-            cmd3 = ["movq", "%rax", dest]
-            push!(res, cmd1)
-            push!(res, cmd2)
-            push!(res, cmd3)
+        elseif (inst == "imulq")
+            if (match(r"^%.+", dest) == nothing)
+                cmd1 = ["movq", dest, "%rax"]
+                cmd2 = ["imulq", orig, "%rax"]
+                cmd3 = ["movq", "%rax", dest]
+                push!(res, cmd1)
+                push!(res, cmd2)
+                push!(res, cmd3)
+            else  #if dest is a %register
+                cmd1 = ["imulq", orig, dest] #result stored in %rax
+                cmd2 = ["movq", "%rax", dest]
+                push!(res, cmd1)
+                push!(res, cmd2)
+            end
 
         else
             push!(res, i)
@@ -309,7 +395,7 @@ function patchInstruction(inp)
     return res
 end
 
-res4 = assignHomes(res3)
+res4 = assignHomes(res3, colorGraphDict, registerList)
 res4_prog = res4[1]
 varNumber = res4[2]
 res5 = patchInstruction(res4_prog)
@@ -317,8 +403,8 @@ res5 = patchInstruction(res4_prog)
 
 
 ## PASS6 add prelude and conclude
-function preludeConclude(prog, varNumber)
-    rspSubqMax = varNumber * 8
+function preludeConclude(prog, colorMaxId, registerList)
+    rspSubqMax = (colorMaxId < length(registerList)) ? 0 : ((colorMaxId - length(registerList)) * 8)
 
     body = "start:\n"
 
@@ -337,13 +423,13 @@ function preludeConclude(prog, varNumber)
     	pushq %rbp
     	movq	 %rsp, %rbp\n""" * "\tsubq	 \$$rspSubqMax, %rsp\n\tjmp start\n\n"
 
-    conclude = """\nconclusion:\n""" * "\taddq	 \$$rspSubqMax, %rsp\n\tpopq	%rbp\n\tretq"
+    conclude = """\nconclusion:\n""" * "\taddq	 \$$rspSubqMax, %rsp\n\tpopq	%rbp\n\tretq\n"
 
     assemblyProg = prelude * body * conclude
     return assemblyProg
 end
 
-res6 = preludeConclude(res5, varNumber)
+res6 = preludeConclude(res5, colorMaxId, registerList)
 # println("PASS6",res6) # emit assembly code
 f2 = open("./a.s", "w")
 write(f2, res6) #write the assembly code

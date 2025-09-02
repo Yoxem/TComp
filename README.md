@@ -15,4 +15,4 @@ to make it executable, please use `gcc`: `gcc ./a.c -o output.out`
 the example `.tc` file is in `./test`
 
 ## Known issues
- - parser for a + b + c .. and a * b * c
+ - all connected variable are pathized (I don't understand the tricky method to elimitated the path number)

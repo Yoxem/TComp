@@ -14,3 +14,4 @@ assign_homes
  5. **OK**assign homes (register allocation)
  6. **OK**patch instructions
  7. **OK**prelude & conclusion
+ 8. **OK** (vartex coloring)

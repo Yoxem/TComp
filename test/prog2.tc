@@ -1,0 +1,6 @@
+int a = 10;
+int a = 13;
+int b = (12 + (0 - a));
+int c = (14 + b);
+int d = 20;
+a - (b - c)

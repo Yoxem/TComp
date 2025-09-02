@@ -1,4 +1,5 @@
 module Parser
+using Match
 
 struct ParserResult
     matched
@@ -85,7 +86,9 @@ end
 
 
 
-patternList = [("int", "\\d+"),
+patternList = [
+               ("cmt", "[#][^\\r\\n]+"),
+               ("int", "\\d+"),
                ("id", "[_a-zA-Z][_0-9a-zA-Z]*"),
                ("lParen", "[\\(]"),
                ("rParen", "[\\)]"),
@@ -184,8 +187,8 @@ func = "(" fn_args ")" "=>" body
 unit = func | "(" exp ")" | atom
 args = unit ("," unit)*
 factor = unit "(" args ")"
-term = (factor (*|/) factor) | factor
-exp = (term (+|-) term) | term
+term = (factor (*|/) term) | factor
+exp = (term [(+|-) exp]) | term
 
 letexp = ty id "=" exp ";" body
 body = exp | letexp
@@ -233,10 +236,12 @@ function funcAux(input)
 end
 
 function longUnitAux(input)
-    rawFunc = seq([typ("lParen"),  exp, typ("rParen")])
+    rawFunc = seq([typ("lParen"), exp, typ("rParen")])
     rawRes = rawFunc.fun(input)
     if rawRes != nothing
-        matched = rawRes.matched[2]
+        #fix for tree fix problem
+        matched = [("%wrapper", "id"), rawRes.matched[2]]
+        
         res = ParserResult(matched, rawRes.remained)
         return res
     else
@@ -300,10 +305,26 @@ end
 factor = Psr(factorAux)
 
 function longTermAux(input)
-    rawFunc = seq([factor,  (typ("mul") | typ("div")), factor])
+    rawFunc = seq([factor,  (typ("mul") | typ("div")), term])
     rawRes = rawFunc.fun(input)
     if rawRes != nothing
-        matched = [("%prime", "id"), rawRes.matched[2], [rawRes.matched[1], rawRes.matched[3]]]
+        #correct the tree a /(b / c) -> (a / b) / c
+        leftRator = rawRes.matched[2]
+        a = rawRes.matched[1]
+        bc = rawRes.matched[3]
+        matched = @match bc begin
+            [("%prime", "id"), (rightRator, tRightRator), [b, c]] where ((rightRator == "*") || (rightRator == "/")) =>
+            begin
+                [("%prime", "id"), (rightRator, tRightRator), [[("%prime", "id"), leftRator, [a, b]], c]]
+            end
+            _ => begin
+                 [("%prime", "id"), leftRator, [a, bc]]
+
+            end
+
+        end
+
+        #matched = [("%prime", "id"), leftRator, [a, bc]]
         res = ParserResult(matched, rawRes.remained)
         return res
     else
@@ -322,10 +343,26 @@ term = Psr(termAux)
 
 
 function longExpAux(input)
-    rawFunc = seq([term,  (typ("plus") | typ("minus")), term])
+    rawFunc = seq([term,  (typ("plus") | typ("minus")), exp])
     rawRes = rawFunc.fun(input)
     if rawRes != nothing
-        matched = [("%prime", "id"), rawRes.matched[2], [rawRes.matched[1], rawRes.matched[3]]]
+        #correct the tree a -(b - c) -> (a - b) - c
+        leftRator = rawRes.matched[2]
+        a = rawRes.matched[1]
+        bc = rawRes.matched[3]
+        matched = @match bc begin
+            [("%prime", "id"), (rightRator, tRightRator), [b, c]] where ((rightRator == "+") || (rightRator == "-")) =>
+            begin
+                [("%prime", "id"), (rightRator, tRightRator), [[("%prime", "id"), leftRator, [a, b]], c]]
+            end
+            _ => begin
+                 [("%prime", "id"), leftRator, [a, bc]]
+
+            end
+
+        end
+
+        #matched = [("%prime", "id"), leftRator, [a, bc]]
         res = ParserResult(matched, rawRes.remained)
         return res
     else
@@ -426,6 +463,17 @@ letExp = Psr(letExpAux)
 
 body = letExp | exp
 
+
+function fixTree(item)
+    return @match item begin
+        (val, t) => item
+        [("%wrapper", "id"), inner] => fixTree(inner)
+        [vars...] => map(fixTree, item)
+        _ => println("parse Error in fixTree")
+    end
+end
+
+
 function totalParse(prog)
     isEntirelyMatched = match(matchEntirely, prog)
     if isEntirelyMatched == false
@@ -437,10 +485,13 @@ function totalParse(prog)
     groupNameList = map(processKeys, collect(mI))
     zippedTokenList = collect(zip(matchedList, groupNameList))
 
-    withoutSpaces = filter((x)-> x[2] != "sp", zippedTokenList)
-    initWrapped = ParserResult([], withoutSpaces)
+    withoutSpaceCmt = filter((x)-> (x[2] != "sp") & (x[2] != "cmt"), zippedTokenList)
+    initWrapped = ParserResult([], withoutSpaceCmt)
     res = initWrapped >> body
-    return res.matched
+
+    res2 = fixTree(res.matched)
+
+    return res2
 end
 
 
