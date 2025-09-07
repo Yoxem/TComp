@@ -1,0 +1,8 @@
+int a = -10;
+int a = False;
+int b = (12 + (-3));
+int c = (14 + b);
+int d = 20;
+if ((True & a) | False)
+then 12
+else (if !True then 0 else (d - 3))

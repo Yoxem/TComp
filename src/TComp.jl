@@ -21,6 +21,83 @@ println("PARSED\n", Parser.prettyStringLisp(parsed))
 tmp_var_no = 0
 
 
+typeEnv = [
+    ("+", ("Fn", ["int", "int"], "int")),
+    ("-", ("Fn", ["int", "int"], "int")),
+    ("*", ("Fn", ["int", "int"], "int")),
+    ("/", ("Fn", ["int", "int"], "int")),   
+    ]
+function typeCheck(ast, typeEnv)
+    pl = Parser.prettyStringLisp
+    result = @match ast begin
+        (_, "bool") => "bool"
+        (_, "int") => "int"
+        [("%prime", _), (op, _), (lhs, rhs)] => begin
+            t_lhs = typeCheck(lhs, env)
+            t_rhs = typeCheck(rhs, env)
+            actualInputType = [t_lhs, t_rhs]
+            funcType = findfirst(x->x[1] == op, typeEnv)[2]
+            expectedInputType = funcType[2]
+            zipped = zip(expectedInputType, actualInputType)
+            mapped = map(a -> a[1] && a[2] , zipped)
+            reduced = reduce((x,y)->x || y, mapped)
+            if reduced == true
+                return funcType[3]
+            else
+                throw("Type Error: Operands of" 
+                    * op * " expected to be"
+                    * string(expectedInputType)
+                    * ", found"
+                    * string(actualInputType))   
+            end     
+        end
+        (var, "%id") => begin 
+            t_var_id = findfirst(x->x[1] == var, typeEnv)
+            if t_var_id == nothing
+                throw(var * "not found in typeEnv")
+            else
+                return typeEnv[t_var_id]
+            end
+        end
+        [("%let", _),[(tVar, _), (var_)], exp, body] =>
+        begin
+            typeOfExp = typeCheck(exp, typeEnv)
+            if tVar != typeOfExp
+                throw("Type Error: type of " * var
+                    * "should be" * tVar
+                    * ", found " * typeOfExp)
+            else
+                newTypeEnv = typeEnv
+                pushfirst!((var, tVar), newTypeEnv)
+                return typeCheck(body, newTypeEnv)
+            end
+        end
+        [("!", "not"), operand] =>
+            begin
+                tOperand = typeCheck(operand, typeEnv)
+                if tOperand != "bool"
+                    throw("Type Error: type of operands for !"
+                    * "should be" * tVar
+                    * ", found " * typeOfExp)
+                else
+                    return "bool"
+                end
+            end
+        [(cmp, _), lhs, rhs] where (cmp[2]) in ["==", "!=", "<", "<=", ">", ">=", "&", "|"] =>
+        begin
+            tLhs = typeCheck(lhs, typeEnv)
+            tRhs = typeCheck(rhs, typeEnv)
+            if !(tLhs == "bool" & tRhs == "bool")
+                throw("Type Error: operands of"
+                * cmp * "should be (bool, bool), not"
+                * string([tLhs, tRhs]))
+            else
+                return "bool"
+            end
+        end
+    end
+
+end
 
 # Pass 1: Duplicated varname uniquified
 function uniquifyVar(parsed, env)

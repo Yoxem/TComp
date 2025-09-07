@@ -87,11 +87,25 @@ end
 
 
 patternList = [
+               ("if", "if"),
+               ("then", "then"),
+               ("else", "else"),
+               ("True", "bool"),
+               ("False", "bool"),
                ("cmt", "[#][^\\r\\n]+"),
                ("int", "\\d+"),
                ("id", "[_a-zA-Z][_0-9a-zA-Z]*"),
                ("lParen", "[\\(]"),
                ("rParen", "[\\)]"),
+               ("eq", "[=][=]"),
+               ("ne", "[!][=]"),
+               ("lt", "[<]"),
+               ("le", "[<][=]"),
+               ("gt", "[>]"),
+               ("ge", "[>][=]"),
+               ("and", "[&]"),
+               ("or", "[\\|]"),
+               ("not", "[!]"),
                ("plus", "[+]"),
                ("funType", "[-][\\>]"),
                ("minus", "[\\-]"),
@@ -182,18 +196,21 @@ end
 #println(prettyString(test2))
 
 """
-atom = int | id
+atom = int | id | bool
 func = "(" fn_args ")" "=>" body
 unit = func | "(" exp ")" | atom
 args = unit ("," unit)*
 factor = unit "(" args ")"
-term = (factor (*|/) term) | factor
-exp = (term [(+|-) exp]) | term
-
+unary = (-|!) factor | factor
+term = (unary (*|/) term) | unary
+eqcheckee = (term [(+|-) exp]) | term
+logical = eqcheckee ("=="|"<"|"<="|">"|">=") eqcheckee | eqcheckee
+subexp = logical ("&&"|"||") logical | logical
+exp = if subexp then subexp else subexp | subexp
 letexp = ty id "=" exp ";" body
 body = exp | letexp
 """
-atom = typ("int") | typ("id")
+atom = typ("int") | typ("id") | typ("bool")
 
 
 
@@ -304,8 +321,35 @@ end
 
 factor = Psr(factorAux)
 
+function longUnaryAux(input)
+    rawFunc = seq([(typ("minus") | typ("not")), factor])
+    rawRes = rawFunc.fun(input)
+    if rawRes != nothing
+        rator = rawRes.matched[1]
+        rand = rawRes.matched[2]
+        if rator[2] == "minus" # -a -> 0 - a
+            matched = [("%prime", "id"), rator, [("0", "int"), rand]]
+        else
+            matched = [rator, rand]
+        end
+            res = ParserResult(matched, rawRes.remained)
+        return res
+    else
+        return nothing
+    end
+end
+
+function unaryAux(input)
+    longUnary = Psr(longUnaryAux)
+    rawFunc = longUnary | factor
+    res = rawFunc.fun(input)
+    return res
+end
+
+unary = Psr(unaryAux)
+
 function longTermAux(input)
-    rawFunc = seq([factor,  (typ("mul") | typ("div")), term])
+    rawFunc = seq([unary,  (typ("mul") | typ("div")), term])
     rawRes = rawFunc.fun(input)
     if rawRes != nothing
         #correct the tree a /(b / c) -> (a / b) / c
@@ -334,7 +378,7 @@ end
 
 function termAux(input)
     longTerm = Psr(longTermAux)
-    rawFunc = longTerm | factor
+    rawFunc = longTerm | unary
     res = rawFunc.fun(input)
     return res
 end
@@ -342,8 +386,8 @@ end
 term = Psr(termAux)
 
 
-function longExpAux(input)
-    rawFunc = seq([term,  (typ("plus") | typ("minus")), exp])
+function longEqCheckeeAux(input)
+    rawFunc = seq([term,  (typ("plus") | typ("minus")), eqCheckee])
     rawRes = rawFunc.fun(input)
     if rawRes != nothing
         #correct the tree a -(b - c) -> (a - b) - c
@@ -370,13 +414,86 @@ function longExpAux(input)
     end
 end
     
+function eqCheckeeAux(input)
+    longEqCheckee = Psr(longEqCheckeeAux)
+    rawFunc = longEqCheckee | term
+    res = rawFunc.fun(input)
+    return res
+end
+eqCheckee = Psr(eqCheckeeAux)
+
+
+function longlogicalAux(input)
+    rawFunc = seq([eqCheckee,  (typ("eq") | typ("ne")|typ("lt") | typ("gt")|typ("le") | typ("ge")), eqCheckee])
+    rawRes = rawFunc.fun(input)
+    if rawRes != nothing
+        rator = rawRes.matched[2]
+        l = rawRes.matched[1]
+        r = rawRes.matched[3]
+        matched = [rator, l, r]
+        res = ParserResult(matched, rawRes.remained)
+        return res
+    else
+        return nothing
+    end
+end
+    
+function logicalAux(input)
+    longLogical = Psr(longlogicalAux)
+    rawFunc = longLogical | eqCheckee
+    res = rawFunc.fun(input)
+    return res
+end
+logical = Psr(logicalAux)
+
+function longSubExpAux(input)
+    rawFunc = seq([logical,  (typ("and") | typ("or")), logical])
+    rawRes = rawFunc.fun(input)
+    if rawRes != nothing
+        rator = rawRes.matched[2]
+        l = rawRes.matched[1]
+        r = rawRes.matched[3]
+        matched = [rator, l, r]
+        res = ParserResult(matched, rawRes.remained)
+        return res
+    else
+        return nothing
+    end
+end
+    
+function subExpAux(input)
+    longSubExp = Psr(longSubExpAux)
+    rawFunc = longSubExp | logical
+    res = rawFunc.fun(input)
+    return res
+end
+subExp = Psr(subExpAux)
+
+function longExpAux(input)
+    rawFunc = seq([typ("if"), subExp,
+                    typ("then"), subExp,
+                    typ("else"), subExp])
+    rawRes = rawFunc.fun(input)
+    if rawRes != nothing
+        cond = rawRes.matched[2]
+        branch1 = rawRes.matched[4]
+        branch2 = rawRes.matched[6]
+        matched = [("%if", "id"), cond, branch1, branch2]
+        res = ParserResult(matched, rawRes.remained)
+        return res
+    else
+        return nothing
+    end
+end
+    
 function expAux(input)
     longExp = Psr(longExpAux)
-    rawFunc = longExp | term
+    rawFunc = longExp | subExp
     res = rawFunc.fun(input)
     return res
 end
 exp = Psr(expAux)
+
 
 
 """tyOfArgs = "(" ty ("," ty)* ")"
