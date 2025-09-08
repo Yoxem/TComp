@@ -470,9 +470,9 @@ end
 subExp = Psr(subExpAux)
 
 function longExpAux(input)
-    rawFunc = seq([typ("if"), subExp,
-                    typ("then"), subExp,
-                    typ("else"), subExp])
+    rawFunc = seq([typ("if"), exp,
+                    typ("then"), body,
+                    typ("else"), body])
     rawRes = rawFunc.fun(input)
     if rawRes != nothing
         cond = rawRes.matched[2]
