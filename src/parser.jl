@@ -546,10 +546,10 @@ function tyArgItemAux(input, pos)
 end
 
 
-function tyOfArgsAux(input)
+function tyOfArgsAux(input, pos)
     tyArgItem = Psr(tyArgItemAux)
     rawFunc = seq([typ("lParen"), ty, many0(tyArgItem), typ("rParen")])
-    res = rawFunc.fun(input)
+    res = rawFunc.fun(input, pos)
     if res != nothing
         matched = vcat([("%argType")], vcat([res.matched[2]], res.matched[3]))
         res = ParserResult(matched, res.remained)
